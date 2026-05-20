@@ -315,7 +315,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>🍽️ きたごはんMAP</h1>
+  <h1>🍽️ きたごはんMAP <span style="font-size:12px; color:#888; font-weight:normal;">ver 0.02</span></h1>
   <span class="meta">@kitagohan_insta · 店舗 __SHOP_COUNT__店（うち地図表示 __PIN_COUNT__店） · 最終更新 __UPDATED_AT__</span>
 </header>
 <main>
