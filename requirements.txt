@@ -1,0 +1,3 @@
+# build_map.py / fetch_posts.py は Python 標準ライブラリのみで動作するため、
+# 追加パッケージは不要。
+# 将来 pandas / requests 等を使う場合はここに追記する。

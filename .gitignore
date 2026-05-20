@@ -1,0 +1,39 @@
+# Secrets — 絶対にコミットしない
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / clasp（Google Apps Script ローカル開発用）
+node_modules/
+.clasp.json
+package-lock.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build artifacts
+dist/
+build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Backup
+.env.save
+*.bak
+*.before-test
