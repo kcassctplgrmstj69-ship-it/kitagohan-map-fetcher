@@ -26,8 +26,9 @@ DEFAULT_GID = "0"
 
 
 def main() -> int:
-    sheet_id = os.environ.get("KITAGOHAN_SHEET_ID", DEFAULT_ID)
-    gid = os.environ.get("KITAGOHAN_SHEET_GID", DEFAULT_GID)
+    # 空文字を渡された場合（GitHub Actions の未設定 Secret 等）も default にフォールバック
+    sheet_id = os.environ.get("KITAGOHAN_SHEET_ID") or DEFAULT_ID
+    gid = os.environ.get("KITAGOHAN_SHEET_GID") or DEFAULT_GID
     # gviz エンドポイントを使う:
     # /export?format=csv は無認証アクセス時にユーザー固有 URL へリダイレクトされて失敗するため、
     # /gviz/tq?tqx=out:csv の方を使う（こちらは「リンクを知っている全員」設定で素直に CSV を返す）
