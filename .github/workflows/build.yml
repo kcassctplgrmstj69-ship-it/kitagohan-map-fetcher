@@ -35,6 +35,12 @@ jobs:
             pip install -r requirements.txt
           fi
 
+      - name: Fetch Google Spreadsheet (kitagohan_stores)
+        env:
+          KITAGOHAN_SHEET_ID: ${{ secrets.KITAGOHAN_SHEET_ID }}
+          KITAGOHAN_SHEET_GID: ${{ secrets.KITAGOHAN_SHEET_GID }}
+        run: python3 scripts/fetch_sheet.py
+
       - name: Fetch Instagram posts
         env:
           INSTAGRAM_BUSINESS_ACCOUNT_ID: ${{ secrets.INSTAGRAM_BUSINESS_ACCOUNT_ID }}

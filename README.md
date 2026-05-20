@@ -70,6 +70,19 @@
 
 ### 初回セットアップ (1回だけ)
 
+#### 0. スプレッドシートを公開設定にする
+
+`kitagohan_stores` スプレッドシートを GitHub Actions から読み取れるようにします。
+
+1. [kitagohan_stores スプレッドシート](https://docs.google.com/spreadsheets/d/1KQUrkR2hXYhfOoMoANq0OgWcGAZdkJqepn1MGgllPX4/edit) を開く
+2. 右上の **「共有」** をクリック
+3. 「一般的なアクセス」を **「リンクを知っている全員」「閲覧者」** に変更
+4. 完了
+
+> ⚠️ スプレッドシートID自体は公開リポジトリに含まれます。「リンクを知っている全員」になっているため、IDを知る人なら閲覧可能になります。きたごはん MAP は店舗情報を公開する性質のページなので問題ありませんが、機密項目を追加する場合はそれらの列を別シートに分離してください。
+
+
+
 ```bash
 # 1. gh CLI をインストールして認証
 brew install gh

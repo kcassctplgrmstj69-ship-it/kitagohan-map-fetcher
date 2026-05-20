@@ -24,7 +24,7 @@ POSTS_PATH = ROOT / "data" / "posts.json"
 GRAPH_API_VERSION = "v21.0"
 FIELDS = (
     "id,caption,media_type,media_url,thumbnail_url,permalink,"
-    "timestamp,like_count,comments_count"
+    "timestamp,like_count,comments_count,media_product_type"
 )
 PAGE_LIMIT = 50      # 1ページあたりの取得件数（最大100）
 MAX_PAGES = 30       # 安全弁: 最大ページ数（50件×30＝1500件）
