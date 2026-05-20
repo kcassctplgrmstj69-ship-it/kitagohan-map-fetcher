@@ -28,9 +28,12 @@ DEFAULT_GID = "0"
 def main() -> int:
     sheet_id = os.environ.get("KITAGOHAN_SHEET_ID", DEFAULT_ID)
     gid = os.environ.get("KITAGOHAN_SHEET_GID", DEFAULT_GID)
+    # gviz エンドポイントを使う:
+    # /export?format=csv は無認証アクセス時にユーザー固有 URL へリダイレクトされて失敗するため、
+    # /gviz/tq?tqx=out:csv の方を使う（こちらは「リンクを知っている全員」設定で素直に CSV を返す）
     url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-        f"/export?format=csv&gid={gid}"
+        f"/gviz/tq?tqx=out:csv&gid={gid}"
     )
     print(f"→ ダウンロード中: {url}")
 
