@@ -205,6 +205,10 @@ def build_shops() -> tuple[list[dict], int, int, int]:
         if lat is not None and lon is not None:
             geocoded += 1
 
+        # 最新取材日 = マッチした投稿のタイムスタンプ最大値
+        ts_vals = [p["timestamp"] for p in shop_posts if p.get("timestamp")]
+        latest_ts = max(ts_vals) if ts_vals else None
+
         record = {
             "name": name,
             "status": (r.get("ステータス") or "").strip(),
@@ -224,9 +228,16 @@ def build_shops() -> tuple[list[dict], int, int, int]:
             "highlight": (r.get("きたごはんポイント(要追加)") or "").strip(),
             "private_room": (r.get("個室(あり/なし)") or "").strip(),
             "smoking": (r.get("喫煙(禁煙/喫煙可/分煙)") or "").strip(),
+            "faq_parking": (r.get("FAQ_駐車場") or "").strip(),
+            "faq_kids": (r.get("FAQ_子供入店") or "").strip(),
+            "faq_stroller": (r.get("FAQ_ベビーカー") or "").strip(),
+            "faq_takeout": (r.get("FAQ_テイクアウト") or "").strip(),
+            "faq_cashless": (r.get("FAQ_キャッシュレス") or "").strip(),
+            "faq_pet": (r.get("FAQ_ペット同伴") or "").strip(),
             "max_plays": to_int(r.get("再生数_最大")),
             "google_rating": to_float(r.get("Google評価")),
             "google_reviews": to_int(r.get("Google口コミ数")),
+            "latest_ts": latest_ts,
             "posts": shop_posts,
         }
         shops.append(record)
@@ -241,241 +252,455 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>きたごはんMAP</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  :root { color-scheme: light dark; --accent: #ff6b35; }
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; }
-  header { padding: 12px 16px; border-bottom: 1px solid #ddd; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  header h1 { margin: 0; font-size: 18px; }
-  header .meta { color: #666; font-size: 13px; }
-  main { display: grid; grid-template-columns: 1fr 380px; height: calc(100vh - 50px); }
-  #map { width: 100%; height: 100%; }
-  aside { overflow-y: auto; border-left: 1px solid #ddd; background: #fafafa; }
+  :root {
+    --accent: #ff6b35;
+    --bg: #ffffff;
+    --text: #1a1a1a;
+    --text-sub: #6b6b6b;
+    --line: #e8e8e8;
+    --shadow: 0 2px 12px rgba(0,0,0,0.14);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    color: var(--text); background: #e9e9e9;
+  }
+  #map { position: fixed; inset: 0; z-index: 0; }
 
-  /* リストカード */
-  .card { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; gap: 10px; }
-  .card:hover { background: #f0f0f0; }
-  .card.active { background: #fff3cd; }
+  /* ===== 上部フローティングバー ===== */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    padding: 10px 12px 0;
+    pointer-events: none;
+  }
+  #topbar .bar {
+    background: var(--bg); border-radius: 14px; box-shadow: var(--shadow);
+    padding: 8px 12px; pointer-events: auto;
+  }
+  #topbar .brand {
+    display: flex; align-items: baseline; gap: 7px;
+    font-size: 15px; font-weight: 700;
+  }
+  #topbar .brand .ver { font-size: 11px; font-weight: 400; color: var(--text-sub); }
+  #topbar .filters { display: flex; gap: 8px; margin-top: 8px; }
+  #topbar select {
+    flex: 1; min-width: 0; font-size: 13px; padding: 7px 8px;
+    border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    color: var(--text); -webkit-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center;
+  }
+
+  /* ===== マーカー ===== */
+  .pin {
+    width: 18px; height: 18px; background: #ea4335;
+    border: 2.5px solid #fff; border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg); box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    cursor: pointer;
+  }
+  .pin.sel { background: var(--accent); width: 26px; height: 26px; z-index: 999 !important; }
+
+  /* ===== ボトムシート ===== */
+  #sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 900;
+    height: 88vh; background: var(--bg);
+    border-radius: 16px 16px 0 0; box-shadow: 0 -2px 16px rgba(0,0,0,0.16);
+    display: flex; flex-direction: column;
+    transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+    touch-action: none;
+  }
+  #sheet-handle { padding: 8px 16px 6px; cursor: grab; flex-shrink: 0; }
+  #sheet-handle .grip {
+    width: 36px; height: 4px; border-radius: 2px; background: #d2d2d2; margin: 0 auto 8px;
+  }
+  #sheet-handle .count { font-size: 13px; color: var(--text-sub); text-align: center; }
+  #sheet-handle .count b { color: var(--text); font-weight: 700; }
+  #sheet-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 24px; }
+
+  /* ===== リストカード ===== */
+  .card {
+    display: flex; gap: 11px; padding: 11px 14px;
+    border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .card:active { background: #f6f6f6; }
+  .card.sel { background: #fff4ef; }
   .card .thumb {
-    width: 72px; aspect-ratio: 9 / 16;
-    object-fit: cover; border-radius: 6px;
-    flex-shrink: 0; background: #ddd;
+    width: 60px; aspect-ratio: 9/16; flex-shrink: 0;
+    object-fit: cover; border-radius: 8px; background: #e4e4e4;
+  }
+  .card .thumb-wrap { position: relative; flex-shrink: 0; }
+  .card .thumb-wrap .play-badge {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(0,0,0,0.5); color: #fff; font-size: 10px;
+    display: flex; align-items: center; justify-content: center;
   }
   .card .body { flex: 1; min-width: 0; }
-  .card .name { font-weight: 600; margin: 0 0 4px; font-size: 14px; line-height: 1.3; }
-  .card .meta-row { color: #777; font-size: 12px; margin-bottom: 3px; }
-  .card .meta-row .star { color: #f6a623; }
-  .card .meta-row .plays { color: var(--accent); font-weight: 600; }
-  .card .tags { font-size: 11px; color: #999; margin-top: 3px; }
-  .nogeo { padding: 12px; color: #999; font-size: 13px; border-bottom: 1px solid #eee; }
+  .card .name { font-size: 14px; font-weight: 700; line-height: 1.35; margin-bottom: 3px; }
+  .card .row { font-size: 12px; color: var(--text-sub); margin-bottom: 2px; }
+  .card .row .star { color: #f5a623; font-weight: 700; }
+  .card .row .plays { color: var(--accent); font-weight: 700; }
+  .card .genre { display: inline-block; font-size: 11px; color: #555;
+    background: #f0f0f0; border-radius: 6px; padding: 1px 7px; margin-top: 3px; }
 
-  /* ポップアップ */
-  .leaflet-popup-content { margin: 12px 14px; min-width: 240px; }
-  .pop-media-wrap {
-    width: 240px; aspect-ratio: 9 / 16;
-    background: #000; border-radius: 8px; overflow: hidden;
-    margin-bottom: 8px; position: relative;
+  /* ===== 詳細オーバーレイ ===== */
+  #detail {
+    position: fixed; inset: 0; z-index: 2000; background: var(--bg);
+    transform: translateY(100%); transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+    display: flex; flex-direction: column; overflow: hidden;
   }
-  .pop-media-wrap video, .pop-media-wrap img {
-    width: 100%; height: 100%; object-fit: cover; display: block;
+  #detail.open { transform: translateY(0); }
+  #detail .d-close {
+    position: absolute; top: 12px; right: 12px; z-index: 5;
+    width: 36px; height: 36px; border-radius: 50%; border: none;
+    background: rgba(0,0,0,0.55); color: #fff; font-size: 20px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
   }
-  .pop-title { font-weight: 700; font-size: 15px; margin: 6px 0 4px; }
-  .pop-meta { font-size: 12px; color: #555; margin-bottom: 3px; }
-  .pop-meta .star { color: #f6a623; font-weight: 600; }
-  .pop-meta .plays { color: var(--accent); font-weight: 600; }
-  .pop-pills {
-    display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0;
+  #detail .d-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #detail .d-media {
+    width: 100%; aspect-ratio: 9/16; max-height: 56vh; background: #000;
+    display: flex; align-items: center; justify-content: center;
   }
-  .pop-pills .pill {
-    background: #eef; color: #335; font-size: 11px;
-    padding: 2px 8px; border-radius: 10px;
+  #detail .d-media video, #detail .d-media img {
+    width: 100%; height: 100%; object-fit: contain; background: #000;
   }
-  .pop-highlight { font-size: 12px; color: #444; margin: 6px 0; line-height: 1.4; }
-  .pop-thumbs {
-    display: flex; gap: 4px; margin-top: 6px;
+  #detail .d-thumbs { display: flex; gap: 6px; padding: 8px 14px 0; }
+  #detail .d-thumbs img {
+    width: 44px; aspect-ratio: 9/16; object-fit: cover; border-radius: 6px;
+    border: 2px solid transparent; cursor: pointer;
   }
-  .pop-thumbs .pt {
-    width: 40px; aspect-ratio: 9 / 16;
-    object-fit: cover; border-radius: 4px; cursor: pointer;
-    border: 2px solid transparent;
+  #detail .d-thumbs img.active { border-color: var(--accent); }
+  #detail .d-body { padding: 12px 16px 40px; }
+  #detail .d-name { font-size: 19px; font-weight: 700; line-height: 1.4; }
+  #detail .d-stat { font-size: 14px; margin-top: 7px; }
+  #detail .d-stat .star { color: #f5a623; font-weight: 700; }
+  #detail .d-stat .plays { color: var(--accent); font-weight: 700; }
+  #detail .d-genre { margin-top: 8px; }
+  #detail .d-genre span {
+    display: inline-block; font-size: 12px; background: #f0f0f0; color: #555;
+    border-radius: 7px; padding: 3px 9px; margin: 0 5px 5px 0;
   }
-  .pop-thumbs .pt.active { border-color: var(--accent); }
-  .pop-links { margin-top: 6px; font-size: 12px; }
-  .pop-links a { color: #06c; text-decoration: none; margin-right: 8px; }
-  .pop-links a:hover { text-decoration: underline; }
+  #detail .d-info { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  #detail .d-info .line { display: flex; gap: 9px; font-size: 13px; margin-bottom: 9px; }
+  #detail .d-info .line .ic { width: 18px; flex-shrink: 0; text-align: center; }
+  #detail .d-info .line .tx { flex: 1; line-height: 1.5; }
+  #detail .d-info .line .tx .lb { color: var(--text-sub); font-size: 11px; display: block; }
+  #detail .d-hl {
+    margin-top: 12px; background: #fff4ef; border-radius: 10px;
+    padding: 10px 12px; font-size: 13px; line-height: 1.6;
+  }
+  #detail .d-tags { margin-top: 12px; }
+  #detail .d-tags span {
+    display: inline-block; font-size: 12px; background: #eef3ff; color: #3355aa;
+    border-radius: 11px; padding: 3px 10px; margin: 0 5px 5px 0;
+  }
+  #detail .d-links { margin-top: 16px; }
+  #detail .d-links a {
+    display: block; text-align: center; text-decoration: none;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 700;
+    border-radius: 10px; padding: 11px; margin-bottom: 8px;
+  }
+  #detail .d-links a.sub { background: #f0f0f0; color: var(--text); }
 
-  @media (max-width: 700px) {
-    main { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; }
-    aside { border-left: none; border-top: 1px solid #ddd; }
-    .pop-media-wrap { width: 200px; }
-  }
+  /* Leaflet 既定の attribution を控えめに */
+  .leaflet-control-attribution { font-size: 9px; opacity: 0.7; }
 </style>
 </head>
 <body>
-<header>
-  <h1>🍽️ きたごはんMAP <span style="font-size:12px; color:#888; font-weight:normal;">ver 0.02</span></h1>
-  <span class="meta">@kitagohan_insta · 店舗 __SHOP_COUNT__店（うち地図表示 __PIN_COUNT__店） · 最終更新 __UPDATED_AT__</span>
-</header>
-<main>
-  <div id="map"></div>
-  <aside id="list"></aside>
-</main>
+
+<div id="map"></div>
+
+<div id="topbar">
+  <div class="bar">
+    <div class="brand">🍽️ きたごはんMAP <span class="ver">ver 0.03</span></div>
+    <div class="filters">
+      <select id="f-area"><option value="">すべてのエリア</option></select>
+      <select id="f-genre"><option value="">すべてのジャンル</option></select>
+    </div>
+  </div>
+</div>
+
+<div id="sheet">
+  <div id="sheet-handle">
+    <div class="grip"></div>
+    <div class="count"><b id="cnt">0</b> 店 · 再生数順</div>
+  </div>
+  <div id="sheet-list"></div>
+</div>
+
+<div id="detail">
+  <button class="d-close" id="d-close" aria-label="閉じる">×</button>
+  <div class="d-scroll" id="d-scroll"></div>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const SHOPS = __SHOPS_JSON__;
-
-const map = L.map('map').setView([43.0686, 141.3507], 13);  // 札幌駅
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; OpenStreetMap'
-}).addTo(map);
-
-const markersById = {};
-const cardsById = {};
-
-const list = document.getElementById('list');
-const withGeo = SHOPS.filter(s => s.lat != null && s.lon != null);
-const withoutGeo = SHOPS.filter(s => !(s.lat != null && s.lon != null));
+SHOPS.forEach((s, i) => { s.idx = i; });
+const UPDATED_AT = "__UPDATED_AT__";
 
 function esc(s) {
   return (s || '').replace(/[&<>"']/g, c => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   }[c]));
 }
-
 function formatPlays(n) {
   if (n == null || isNaN(n)) return '-';
   if (n >= 10000) return (n / 10000).toFixed(1).replace(/\\.0$/, '') + '万';
   return n.toLocaleString();
 }
-
-function firstPostMedia(shop) {
-  return (shop.posts || []).find(p => p.thumbnail_url || p.media_url) || null;
+function shopPosts(s) {
+  return (s.posts || []).filter(p => p.thumbnail_url || p.media_url);
+}
+function hasVideo(s) {
+  return shopPosts(s).some(p => p.media_type === 'VIDEO' && p.media_url);
 }
 
-function buildPopupHTML(shop) {
-  const posts = (shop.posts || []).filter(p => !p._missing && (p.thumbnail_url || p.media_url));
-  const initial = posts[0] || {};
+/* ===== 地図 ===== */
+const map = L.map('map', { zoomControl: false, attributionControl: true })
+  .setView([43.0621, 141.3544], 13);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  maxZoom: 20, subdomains: 'abcd',
+  attribution: '&copy; OpenStreetMap &copy; CARTO'
+}).addTo(map);
 
-  const mediaSlotId = `media-${shop.idx}`;
-  const renderInitialMedia = (post) => {
-    if (!post) return '';
-    if (post.media_type === 'VIDEO' && post.media_url) {
-      return `<video src="${esc(post.media_url)}" poster="${esc(post.thumbnail_url || '')}"
-                controls playsinline preload="metadata"></video>`;
-    }
-    return `<img src="${esc(post.thumbnail_url || post.media_url)}" alt="">`;
-  };
-
-  const tagsHTML = (shop.scene_tags || '').split(',')
-    .map(t => t.trim()).filter(t => t)
-    .slice(0, 5)
-    .map(t => `<span class="pill">${esc(t)}</span>`).join('');
-
-  const thumbsHTML = posts.length > 1 ? `
-    <div class="pop-thumbs">
-      ${posts.map((p, i) => `
-        <img class="pt ${i === 0 ? 'active' : ''}"
-             data-shop="${shop.idx}" data-post="${i}"
-             src="${esc(p.thumbnail_url || p.media_url)}" alt="">
-      `).join('')}
-    </div>` : '';
-
-  return `
-    <div class="pop-media-wrap" id="${mediaSlotId}">${renderInitialMedia(initial)}</div>
-    <div class="pop-title">${esc(shop.name)}</div>
-    <div class="pop-meta">
-      ${shop.google_rating != null ? `<span class="star">★ ${shop.google_rating.toFixed(1)}</span> (${shop.google_reviews ?? '?'}件)` : ''}
-      ${shop.max_plays != null ? ` · <span class="plays">▶ ${formatPlays(shop.max_plays)}</span>` : ''}
-    </div>
-    ${shop.area || shop.main_genre ? `<div class="pop-meta">${esc(shop.area || '')}${shop.area && shop.main_genre ? ' · ' : ''}${esc(shop.main_genre || '')}${shop.sub_genre ? ' / ' + esc(shop.sub_genre) : ''}</div>` : ''}
-    ${shop.address ? `<div class="pop-meta">${esc(shop.address)}</div>` : ''}
-    ${shop.budget_lunch || shop.budget_dinner ? `<div class="pop-meta">💴 ${shop.budget_lunch ? '昼 ¥' + esc(shop.budget_lunch) : ''}${shop.budget_lunch && shop.budget_dinner ? ' / ' : ''}${shop.budget_dinner ? '夜 ¥' + esc(shop.budget_dinner) : ''}</div>` : ''}
-    ${tagsHTML ? `<div class="pop-pills">${tagsHTML}</div>` : ''}
-    ${shop.highlight ? `<div class="pop-highlight">💡 ${esc(shop.highlight)}</div>` : ''}
-    ${thumbsHTML}
-    <div class="pop-links">
-      ${posts.map((p, i) => `<a href="${esc(p.permalink)}" target="_blank" rel="noopener">投稿${i+1}を Instagram で開く</a>`).join('<br>')}
-    </div>
-  `;
-}
-
-// ポップアップ内のサムネクリック → 動画/画像を切り替え
-document.addEventListener('click', (e) => {
-  const t = e.target;
-  if (t.classList && t.classList.contains('pt')) {
-    const shopIdx = +t.dataset.shop;
-    const postIdx = +t.dataset.post;
-    const shop = SHOPS[shopIdx];
-    const post = (shop.posts || []).filter(p => !p._missing && (p.thumbnail_url || p.media_url))[postIdx];
-    const slot = document.getElementById(`media-${shopIdx}`);
-    if (slot && post) {
-      if (post.media_type === 'VIDEO' && post.media_url) {
-        slot.innerHTML = `<video src="${post.media_url}" poster="${post.thumbnail_url || ''}" controls playsinline preload="metadata" autoplay></video>`;
-      } else {
-        slot.innerHTML = `<img src="${post.thumbnail_url || post.media_url}" alt="">`;
-      }
-    }
-    // active 切り替え
-    const sibs = slot ? slot.parentNode.querySelectorAll('.pt') : [];
-    sibs.forEach((el, i) => el.classList.toggle('active', i === postIdx));
-  }
-});
-
-SHOPS.forEach((s, idx) => { s.idx = idx; });
+const withGeo = SHOPS.filter(s => s.lat != null && s.lon != null);
+const markersById = {};
+let selectedIdx = null;
 
 withGeo.forEach(s => {
-  const m = L.marker([s.lat, s.lon]).addTo(map);
-  m.bindPopup(() => buildPopupHTML(s), { maxWidth: 280, minWidth: 240 });
+  const icon = L.divIcon({
+    className: '', html: '<div class="pin"></div>',
+    iconSize: [18, 18], iconAnchor: [9, 18]
+  });
+  const m = L.marker([s.lat, s.lon], { icon }).addTo(map);
+  m.on('click', () => selectShop(s.idx, true));
   markersById[s.idx] = m;
 });
 
-function renderList() {
-  list.innerHTML = '';
-  withGeo
-    .slice()
-    .sort((a, b) => (b.max_plays || 0) - (a.max_plays || 0))
-    .forEach(s => {
-      const card = document.createElement('div');
-      card.className = 'card';
-      const top = firstPostMedia(s) || {};
-      const thumb = top.thumbnail_url || top.media_url || '';
-      card.innerHTML = `
-        <img class="thumb" loading="lazy" src="${esc(thumb)}" alt="">
-        <div class="body">
-          <div class="name">${esc(s.name)}</div>
-          <div class="meta-row">
-            ${s.google_rating != null ? `<span class="star">★ ${s.google_rating.toFixed(1)}</span> (${s.google_reviews ?? '?'})` : ''}
-            ${s.max_plays != null ? ` · <span class="plays">▶ ${formatPlays(s.max_plays)}</span>` : ''}
-          </div>
-          ${s.area || s.main_genre ? `<div class="meta-row">${esc(s.area || '')}${s.area && s.main_genre ? ' · ' : ''}${esc(s.main_genre || '')}</div>` : ''}
-          ${s.highlight ? `<div class="tags">💡 ${esc(s.highlight.slice(0, 50))}</div>` : ''}
-        </div>
-      `;
-      card.addEventListener('click', () => {
-        const m = markersById[s.idx];
-        if (m) {
-          map.setView(m.getLatLng(), 16);
-          m.openPopup();
-          document.querySelectorAll('.card.active').forEach(el => el.classList.remove('active'));
-          card.classList.add('active');
-        }
-      });
-      cardsById[s.idx] = card;
-      list.appendChild(card);
-    });
+if (withGeo.length) {
+  map.fitBounds(withGeo.map(s => [s.lat, s.lon]), { padding: [40, 40], maxZoom: 14 });
+}
 
-  if (withoutGeo.length) {
-    const sec = document.createElement('div');
-    sec.className = 'nogeo';
-    sec.innerHTML = `<strong>地図化できなかった店舗 (${withoutGeo.length}店)</strong><br>住所未確定 or ジオコード失敗のため地図ピンが立てられませんでした。`;
-    list.appendChild(sec);
+/* ===== フィルタ ===== */
+const fArea = document.getElementById('f-area');
+const fGenre = document.getElementById('f-genre');
+[...new Set(withGeo.map(s => s.area).filter(Boolean))].sort()
+  .forEach(a => fArea.add(new Option(a, a)));
+[...new Set(withGeo.map(s => s.main_genre).filter(Boolean))].sort()
+  .forEach(g => fGenre.add(new Option(g, g)));
+fArea.addEventListener('change', applyFilter);
+fGenre.addEventListener('change', applyFilter);
+
+function visibleShops() {
+  const a = fArea.value, g = fGenre.value;
+  return withGeo.filter(s =>
+    (!a || s.area === a) && (!g || s.main_genre === g)
+  );
+}
+function applyFilter() {
+  const vis = visibleShops();
+  const visSet = new Set(vis.map(s => s.idx));
+  withGeo.forEach(s => {
+    const m = markersById[s.idx];
+    if (visSet.has(s.idx)) { if (!map.hasLayer(m)) m.addTo(map); }
+    else { if (map.hasLayer(m)) map.removeLayer(m); }
+  });
+  renderList(vis);
+  if (vis.length) {
+    map.fitBounds(vis.map(s => [s.lat, s.lon]), { padding: [40, 40], maxZoom: 15 });
   }
 }
-renderList();
+
+/* ===== リスト ===== */
+const sheetList = document.getElementById('sheet-list');
+const cntEl = document.getElementById('cnt');
+
+function renderList(shops) {
+  const sorted = shops.slice().sort((a, b) => (b.max_plays || 0) - (a.max_plays || 0));
+  cntEl.textContent = sorted.length;
+  sheetList.innerHTML = '';
+  sorted.forEach(s => {
+    const posts = shopPosts(s);
+    const thumb = posts.length ? (posts[0].thumbnail_url || posts[0].media_url) : '';
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.idx = s.idx;
+    card.innerHTML = `
+      <div class="thumb-wrap">
+        <img class="thumb" loading="lazy" src="${esc(thumb)}" alt="">
+        ${hasVideo(s) ? '<div class="play-badge">▶</div>' : ''}
+      </div>
+      <div class="body">
+        <div class="name">${esc(s.name)}</div>
+        <div class="row">
+          ${s.google_rating != null ? `<span class="star">★ ${s.google_rating.toFixed(1)}</span> (${s.google_reviews ?? '?'})` : ''}
+          ${s.max_plays != null ? ` &nbsp;<span class="plays">▶ ${formatPlays(s.max_plays)}</span>` : ''}
+        </div>
+        ${s.area ? `<div class="row">${esc(s.area)}</div>` : ''}
+        ${s.main_genre ? `<span class="genre">${esc(s.main_genre)}</span>` : ''}
+      </div>
+    `;
+    card.addEventListener('click', () => selectShop(s.idx, false));
+    sheetList.appendChild(card);
+  });
+}
+
+/* ===== 店舗選択 ===== */
+function selectShop(idx, fromPin) {
+  selectedIdx = idx;
+  const s = SHOPS[idx];
+  // マーカー強調
+  Object.entries(markersById).forEach(([i, m]) => {
+    const el = m.getElement && m.getElement();
+    if (el) {
+      const pin = el.querySelector('.pin');
+      if (pin) pin.classList.toggle('sel', +i === idx);
+    }
+  });
+  // 地図移動
+  if (s.lat != null && s.lon != null) {
+    map.panTo([s.lat, s.lon], { animate: true });
+  }
+  // リストカード強調＋スクロール
+  sheetList.querySelectorAll('.card').forEach(c => {
+    const on = +c.dataset.idx === idx;
+    c.classList.toggle('sel', on);
+    if (on && fromPin) {
+      setSheet('peek');
+      c.scrollIntoView({ block: 'nearest' });
+    }
+  });
+  if (fromPin) {
+    // ピンから来たらワンタップで詳細は出さず、リストで見せる
+    return;
+  }
+  openDetail(idx);
+}
+
+/* ===== 詳細オーバーレイ ===== */
+const detail = document.getElementById('detail');
+const dScroll = document.getElementById('d-scroll');
+document.getElementById('d-close').addEventListener('click', closeDetail);
+
+function mediaHTML(post, autoplay) {
+  if (post.media_type === 'VIDEO' && post.media_url) {
+    return `<video src="${esc(post.media_url)}" poster="${esc(post.thumbnail_url||'')}"
+              controls playsinline preload="metadata" ${autoplay ? 'autoplay' : ''}></video>`;
+  }
+  return `<img src="${esc(post.thumbnail_url || post.media_url)}" alt="">`;
+}
+
+function openDetail(idx) {
+  const s = SHOPS[idx];
+  const posts = shopPosts(s);
+  const tags = (s.scene_tags || '').split(',').map(t => t.trim()).filter(Boolean);
+  const infoLine = (ic, lb, val) => val
+    ? `<div class="line"><div class="ic">${ic}</div><div class="tx"><span class="lb">${lb}</span>${esc(val)}</div></div>` : '';
+
+  let budget = '';
+  if (s.budget_lunch) budget += '昼 ¥' + s.budget_lunch;
+  if (s.budget_dinner) budget += (budget ? ' / ' : '') + '夜 ¥' + s.budget_dinner;
+
+  dScroll.innerHTML = `
+    <div class="d-media" id="d-media">${posts.length ? mediaHTML(posts[0], false) : '<div style="color:#888;font-size:13px">写真なし</div>'}</div>
+    ${posts.length > 1 ? `<div class="d-thumbs">${posts.map((p, i) =>
+      `<img class="${i===0?'active':''}" data-post="${i}" src="${esc(p.thumbnail_url||p.media_url)}" alt="">`
+    ).join('')}</div>` : ''}
+    <div class="d-body">
+      <div class="d-name">${esc(s.name)}</div>
+      <div class="d-stat">
+        ${s.google_rating != null ? `<span class="star">★ ${s.google_rating.toFixed(1)}</span> <span style="color:#888">(${s.google_reviews ?? '?'}件のGoogle口コミ)</span>` : ''}
+        ${s.max_plays != null ? ` &nbsp; <span class="plays">▶ ${formatPlays(s.max_plays)}回</span>` : ''}
+      </div>
+      <div class="d-genre">
+        ${s.main_genre ? `<span>${esc(s.main_genre)}</span>` : ''}
+        ${s.sub_genre ? `<span>${esc(s.sub_genre)}</span>` : ''}
+        ${s.visit_count ? `<span>取材${s.visit_count}回</span>` : ''}
+      </div>
+      <div class="d-info">
+        ${infoLine('📍', 'エリア・住所', [s.area, s.address].filter(Boolean).join(' / '))}
+        ${infoLine('🕒', '営業時間', s.hours)}
+        ${infoLine('🚫', '定休日', s.closed)}
+        ${infoLine('💴', '予算', budget)}
+        ${infoLine('🚪', '個室', s.private_room)}
+        ${infoLine('🚬', '喫煙', s.smoking)}
+      </div>
+      ${s.highlight ? `<div class="d-hl">💡 ${esc(s.highlight)}</div>` : ''}
+      ${tags.length ? `<div class="d-tags">${tags.map(t => `<span># ${esc(t)}</span>`).join('')}</div>` : ''}
+      <div class="d-links">
+        ${posts.map((p, i) => `<a href="${esc(p.permalink)}" target="_blank" rel="noopener" class="sub">投稿${i+1}を Instagram で見る</a>`).join('')}
+      </div>
+      <div style="text-align:center;color:#aaa;font-size:11px;margin-top:14px;">最終更新 ${esc(UPDATED_AT)}</div>
+    </div>
+  `;
+  // サムネ切り替え
+  dScroll.querySelectorAll('.d-thumbs img').forEach(img => {
+    img.addEventListener('click', () => {
+      const pi = +img.dataset.post;
+      document.getElementById('d-media').innerHTML = mediaHTML(posts[pi], true);
+      dScroll.querySelectorAll('.d-thumbs img').forEach((x, i) => x.classList.toggle('active', i === pi));
+    });
+  });
+  dScroll.scrollTop = 0;
+  detail.classList.add('open');
+}
+
+function closeDetail() {
+  detail.classList.remove('open');
+  const v = dScroll.querySelector('video');
+  if (v) v.pause();
+}
+
+/* ===== ボトムシートのドラッグ ===== */
+const sheet = document.getElementById('sheet');
+const handle = document.getElementById('sheet-handle');
+const SHEET_VH = 0.88;
+function sheetPx() { return window.innerHeight * SHEET_VH; }
+const states = { peek: () => sheetPx() - 188, full: () => 0 };
+let sheetState = 'peek';
+function setSheet(st) {
+  sheetState = st;
+  sheet.style.transform = `translateY(${states[st]()}px)`;
+}
+setSheet('peek');
+window.addEventListener('resize', () => setSheet(sheetState));
+
+let dragStartY = 0, dragStartT = 0, dragging = false;
+function curT() {
+  const m = /translateY\\(([-0-9.]+)px\\)/.exec(sheet.style.transform);
+  return m ? parseFloat(m[1]) : states.peek();
+}
+function onDown(y) { dragging = true; dragStartY = y; dragStartT = curT(); sheet.style.transition = 'none'; }
+function onMove(y) {
+  if (!dragging) return;
+  let t = dragStartT + (y - dragStartY);
+  t = Math.max(0, Math.min(states.peek(), t));
+  sheet.style.transform = `translateY(${t}px)`;
+}
+function onUp() {
+  if (!dragging) return;
+  dragging = false;
+  sheet.style.transition = '';
+  const t = curT();
+  setSheet(t < states.peek() / 2 ? 'full' : 'peek');
+}
+handle.addEventListener('touchstart', e => onDown(e.touches[0].clientY), { passive: true });
+handle.addEventListener('touchmove', e => onMove(e.touches[0].clientY), { passive: true });
+handle.addEventListener('touchend', onUp);
+handle.addEventListener('mousedown', e => { onDown(e.clientY);
+  const mm = e => onMove(e.clientY), mu = () => { onUp(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+  document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
+});
+handle.addEventListener('click', () => { if (!dragging) setSheet(sheetState === 'peek' ? 'full' : 'peek'); });
+
+/* ===== 初期描画 ===== */
+renderList(withGeo);
 </script>
 </body>
 </html>
